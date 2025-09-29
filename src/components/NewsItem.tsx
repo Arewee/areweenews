@@ -48,7 +48,8 @@ const ArrowsRightLeftIcon: React.FC<{className?: string}> = ({ className }) => (
 const SentimentIndicator: React.FC<{ sentiment?: ViralityBreakdown['sentiment'] }> = ({ sentiment }) => {
     if (!sentiment) return null;
 
-    const styles: Record<ViralityBreakdown['sentiment'], { text: string; icon: JSX.Element; classes: string; }> = {
+    // FIX: Removed explicit type to fix "Cannot find namespace 'JSX'" error by letting TypeScript infer the type.
+    const styles = {
         Positive: { text: 'Positiv', icon: <PlusCircleIcon className="w-4 h-4" />, classes: 'text-green-300 bg-green-500/10' },
         Negative: { text: 'Negativ', icon: <MinusCircleIcon className="w-4 h-4" />, classes: 'text-red-400 bg-red-500/10' },
         Neutral: { text: 'Neutral', icon: <Bars2Icon className="w-4 h-4" />, classes: 'text-yellow-400 bg-yellow-500/10' },

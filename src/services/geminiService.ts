@@ -121,12 +121,18 @@ const upcomingEventSchema = {
             type: Type.STRING,
             description: 'Datum och eventuell tid för händelsen, INKLUSIVE ÅR. Format: "Dag DD Mån ÅÅÅÅ, HH:MM" eller "Dag DD Mån ÅÅÅÅ". Exempel: "Tis 28 okt 2024, 19:00" eller "Fre 31 okt 2024".'
         },
+        // FIX: Add rawDate for reliable sorting.
+        rawDate: {
+            type: Type.STRING,
+            description: 'Samma datum som eventDate, men i strikt YYYY-MM-DD-format för tillförlitlig sortering. Exempel: "2024-10-28".'
+        },
         sourceUrl: {
             type: Type.STRING,
             description: 'En valfri, fungerande och högst relevant URL till en sida med mer information om händelsen. Om ingen bra länk finns, utelämna fältet.'
         }
     },
-    required: ['category', 'title', 'description', 'eventDate']
+    // FIX: Add rawDate to required fields for reliable sorting.
+    required: ['category', 'title', 'description', 'eventDate', 'rawDate']
 };
 
 const dayInfoPartialSchema = {
@@ -244,7 +250,7 @@ ${localPrompt}
 
 VIKTIGA REGLER:
 1.  **LÄNK-KRAV:** Försök aktivt att inkludera en fungerande och relevant 'sourceUrl' för alla händelser. Länken ska leda till en officiell webbplats eller en pålitlig nyhetskälla. Om du efter bästa förmåga inte kan hitta en lämplig och trovärdig länk, utelämna 'sourceUrl'-fältet. Undvik helt generiska länkar som 'google.com'.
-2.  **Korrekt datum:** Ange ALLTID ett korrekt och verifierbart datum med ÅR. Använd formatet "Dag DD Mån ÅÅÅÅ, HH:MM" eller "Dag DD Mån ÅÅÅÅ". Fältet 'eventDate' får ALDRIG vara tomt.
+2.  **Korrekt datum:** Ange ALLTID ett korrekt och verifierbart datum med ÅR. Fältet 'eventDate' (format "Dag DD Mån ÅÅÅÅ") och fältet 'rawDate' (format "YYYY-MM-DD") måste båda fyllas i och matcha varandra. De får ALDRIG vara tomma.
 3.  **Sortering:** Sortera hela listan kronologiskt med den tidigaste händelsen först.
 4.  **Språk:** All text måste vara på svenska.`;
 
@@ -268,7 +274,11 @@ VIKTIGA REGLER:
           } catch (e) {
             console.error("Failed to parse upcoming events JSON from Gemini:", e);
              // Return just the local events if parsing fails
-             return verifiedLocalEvents;
+             // FIX: Add id to local events to match the UpcomingEvent[] return type.
+             return verifiedLocalEvents.map((event, index) => ({
+                ...event,
+                id: `event-local-${Date.now()}-${index}`,
+             }));
           }
         }
         
