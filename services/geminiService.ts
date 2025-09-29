@@ -1,0 +1,320 @@
+import { GoogleGenAI, Type } from "@google/genai";
+import type { NewsItem, UpcomingEvent, DayInfo, Source } from '../types';
+import { swedishNameDays } from '../data/nameDays';
+import { localEvents } from '../data/localEvents';
+
+// FIX: Adhering to the @google/genai coding guidelines.
+// The API key is obtained from process.env.API_KEY and is assumed to be pre-configured.
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+const viralityScoreMetricSchema = {
+    type: Type.OBJECT,
+    properties: {
+        score: { type: Type.NUMBER, description: 'Den numeriska poängen (1-100).'},
+        explanation: { type: Type.STRING, description: 'En konkret, datadriven förklaring. Exempel: "Ökar med ~40 000 omnämnanden per timme".'}
+    },
+    required: ['score', 'explanation']
+};
+
+const viralityQualitativeMetricSchema = {
+    type: Type.OBJECT,
+    properties: {
+        value: { type: Type.STRING, description: 'Den kvalitativa bedömningen (t.ex. "Hög", "Miljontals").'},
+        explanation: { type: Type.STRING, description: 'En konkret, datadriven förklaring. Exempel: "Uppskattningsvis 15+ miljoner exponeringar idag".'}
+    },
+    required: ['value', 'explanation']
+};
+
+
+const viralityBreakdownSchema = {
+    type: Type.OBJECT,
+    properties: {
+        viralityRate: { ...viralityScoreMetricSchema, description: 'Poäng (1-100) och en konkret förklaring av spridningshastigheten (t.ex. omnämnanden/timme).'},
+        engagementRate: { ...viralityScoreMetricSchema, description: 'Poäng (1-100) och en förklaring av engagemanget (t.ex. interaktionsgrad i procent).'},
+        estimatedReach: { ...viralityQualitativeMetricSchema, description: 'Kvalitativ bedömning (t.ex. "Miljontals") och en konkret uppskattning av räckvidden (t.ex. "5-7 miljoner unika konton").'},
+        impressionVolume: { ...viralityQualitativeMetricSchema, description: 'Kvalitativ bedömning och en konkret uppskattning av exponeringsvolymen (t.ex. "Över 20 miljoner exponeringar idag").'},
+        shareVelocity: { ...viralityQualitativeMetricSchema, description: 'Kvalitativ bedömning och en konkret förklaring av delningsaktiviteten (t.ex. "Fördubblats de senaste 24 timmarna").'},
+        sentiment: { type: Type.STRING, description: 'Sentimentet. Välj en av: "Positive", "Negative", "Neutral", "Mixed".'},
+        keyFactors: { type: Type.STRING, description: 'En kort mening som förklarar de viktigaste drivkrafterna bakom trenden.'}
+    },
+    required: ['viralityRate', 'engagementRate', 'estimatedReach', 'impressionVolume', 'shareVelocity', 'sentiment', 'keyFactors']
+};
+
+
+const newsItemSchema = {
+    type: Type.OBJECT,
+    properties: {
+        title: {
+            type: Type.STRING,
+            description: 'En kort, specifik och faktabaserad rubrik på svenska. Inkludera namn på personer, produkter, etc. Undvik "clickbait".'
+        },
+        summary: {
+            type: Type.STRING,
+            description: 'En sammanfattning på 2-3 meningar på svenska. Var konkret och informativ.'
+        },
+        sourceUrl: {
+            type: Type.STRING,
+            description: 'En direkt URL till källan.'
+        },
+        sourceName: {
+            type: Type.STRING,
+            description: 'Namnet på källan/plattformen där trenden är viral, t.ex. "TikTok", "Reddit", "X".'
+        },
+        viralityScore: {
+            type: Type.NUMBER,
+            description: 'En uppskattning av hur viral trenden är just nu på en skala från 1 till 100, där 100 är extremt viral.'
+        },
+        regions: {
+            type: Type.ARRAY,
+            description: 'En lista på 1-3 geografiska regioner (kontinenter eller länder) där trenden är mest populär.',
+            items: {
+                type: Type.STRING
+            }
+        },
+        primaryRegionIcon: {
+            type: Type.STRING,
+            description: 'En ikon-identifierare baserad på den primära regionen. Välj en av: "GLOBAL", "USA", "EU", "SE".'
+        },
+        trendDirection: {
+            type: Type.STRING,
+            description: 'Riktningen på trenden. Välj en av: "UP" (växande), "DOWN" (avtagande), "STABLE" (stabil).'
+        },
+        currentActivityLevel: {
+            type: Type.STRING,
+            description: 'Trendens nuvarande status för att ge tidskontext. Välj en av: "NEW" (helt ny trend, < 7 dagar), "PEAKING" (på sin absoluta topp just nu), "RESURGENT" (en äldre trend som fått nytt viralt liv).'
+        },
+        startDate: {
+            type: Type.STRING,
+            description: 'Datum då trenden började bli märkbar, i formatet YYYY-MM-DD.'
+        },
+        viralityHistory: {
+            type: Type.ARRAY,
+            description: 'En lista med 5-7 siffror (heltal) som representerar viralitetspoängen för de senaste 5-7 dagarna, med den senaste dagen sist. Exempel: [20, 35, 50, 65, 80].',
+            items: {
+                type: Type.NUMBER
+            }
+        },
+        viralityBreakdown: {
+            ...viralityBreakdownSchema,
+            description: 'En detaljerad, datadriven uppdelning av viralitetspoängen. Varje mätvärde måste ha en konkret förklaring.'
+        }
+    },
+    required: ['title', 'summary', 'sourceUrl', 'sourceName', 'viralityScore', 'regions', 'trendDirection', 'currentActivityLevel']
+};
+
+const upcomingEventSchema = {
+    type: Type.OBJECT,
+    properties: {
+        category: {
+            type: Type.STRING,
+            description: 'Kategori på svenska. Exempel: Lokalt Norrtälje, Internationellt, Svensk Politik, Tech, Nöje.'
+        },
+        title: {
+            type: Type.STRING,
+            description: 'Titel på evenemanget/händelsen på svenska.'
+        },
+        description: {
+            type: Type.STRING,
+            description: 'En kort beskrivning av händelsen på svenska.'
+        },
+        eventDate: {
+            type: Type.STRING,
+            description: 'Datum och eventuell tid för händelsen, INKLUSIVE ÅR. Format: "Dag DD Mån ÅÅÅÅ, HH:MM" eller "Dag DD Mån ÅÅÅÅ". Exempel: "Tis 28 okt 2024, 19:00" eller "Fre 31 okt 2024".'
+        },
+        sourceUrl: {
+            type: Type.STRING,
+            description: 'En valfri, fungerande och högst relevant URL till en sida med mer information om händelsen. Om ingen bra länk finns, utelämna fältet.'
+        }
+    },
+    required: ['category', 'title', 'description', 'eventDate']
+};
+
+const dayInfoPartialSchema = {
+    type: Type.OBJECT,
+    properties: {
+        themeDay: {
+            type: Type.STRING,
+            description: "En internationellt erkänd temadag. Annars null."
+        },
+        weekNumber: {
+            type: Type.NUMBER,
+            description: "Aktuellt veckonummer i Sverige enligt ISO 8601."
+        }
+    },
+    required: ['weekNumber']
+};
+
+
+export const fetchViralNews = async (excludeTitles: string[] = [], selectedSources: Source[]): Promise<NewsItem[]> => {
+    try {
+        const exclusionPrompt = excludeTitles.length > 0
+            ? ` Följande rubriker har redan visats, så generera helt nya trender som inte finns i den här listan: ${excludeTitles.join(', ')}.`
+            : '';
+        
+        const sourcesPrompt = selectedSources.length > 0
+            ? ` Fokusera på trender från följande källor: ${selectedSources.join(', ')}.`
+            : ' Sök brett över alla sociala medier.';
+
+        const prompt = `Agera som en expert dataanalytiker. Ditt primära uppdrag är att med högsta precision identifiera och returnera de **8 absolut mest virala och betydelsefulla trenderna just nu** som är underrapporterade av traditionella nyhetsmedier.
+**KRAV PÅ INNEHÅLL:**
+1.  **Antal:** Exakt 8 trender ska returneras.
+2.  **Svenskt innehåll:** Exakt 2 av dessa 8 trender MÅSTE ha 'primaryRegionIcon' satt till 'SE'. De andra 6 kan vara från valfri region.
+3.  **Sortering:** Sortera hela listan med de 8 trenderna efter 'viralityScore' i fallande ordning (högst poäng först). Resultatet ska reflektera en stabil och aktuell topplista, inte ett slumpmässigt urval.
+Målgruppen är svensk.
+${sourcesPrompt}
+
+För varje trend, inkludera ALLTID:
+1.  En specifik, faktabaserad titel och en kort sammanfattning.
+2.  En URL till källan, källans namn, regioner, primär region-ikon, och ett startdatum.
+3.  Ett övergripande 'viralityScore' (1-100), en 'trendDirection' ('UP', 'DOWN', 'STABLE'), och en 'viralityHistory' (array med 5-7 siffror).
+4.  **Tidskontext:** Ett 'currentActivityLevel' som beskriver trendens nuvarande status. Välj en av: "NEW" (ny < 7 dagar), "PEAKING" (på sin absoluta topp just nu), "RESURGENT" (äldre trend som fått nytt viralt liv).
+
+5.  **Detaljerad & Konkret Analys ('viralityBreakdown'):** Detta är den viktigaste delen. För varje mätvärde, ange både ett värde/poäng OCH en konkret, datadriven förklaring.
+    *   **viralityRate:** Numerisk poäng ('score') 1-100 OCH en förklaring som "Ökar med ~X omnämnanden/timme".
+    *   **engagementRate:** Numerisk poäng ('score') 1-100 OCH en förklaring som "Hög interaktionsgrad (~X%)".
+    *   **estimatedReach:** Kvalitativ term ('value', t.ex. "Miljontals") OCH en förklaring som "Uppskattas nå X-Y miljoner unika konton".
+    *   **impressionVolume:** Kvalitativ term ('value', t.ex. "Hög") OCH en förklaring som "Över X miljoner exponeringar idag".
+    *   **shareVelocity:** Kvalitativ term ('value', t.ex. "Snabb") OCH en förklaring som "Antalet delningar har fördubblats de senaste X timmarna".
+    *   **sentiment:** ('Positive', 'Negative', 'Neutral', 'Mixed').
+    *   **keyFactors:** En kort förklarande mening.
+
+All text måste vara på svenska. Var så specifik och datadriven som möjligt i dina förklaringar.${exclusionPrompt}`;
+
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: newsItemSchema,
+                },
+            },
+        });
+
+        const jsonStr = response.text.trim();
+        const rawNewsItems = JSON.parse(jsonStr);
+
+        return rawNewsItems.map((item: any, index: number) => ({
+            ...item,
+            id: `news-${Date.now()}-${index}`,
+            viralityHistory: item.viralityHistory || [],
+            viralityBreakdown: item.viralityBreakdown || null,
+        }));
+
+    } catch (error) {
+        console.error("Error fetching viral news:", error);
+        throw new Error("Failed to fetch viral news from Gemini API.");
+    }
+};
+
+export const fetchUpcomingEvents = async (): Promise<UpcomingEvent[]> => {
+    try {
+        const today = new Date();
+        const sevenDaysFromNow = new Date();
+        sevenDaysFromNow.setDate(today.getDate() + 7);
+        today.setHours(0, 0, 0, 0); // Start of today
+
+        // 1. Get manually curated local events for 100% accuracy
+        const verifiedLocalEvents = localEvents.filter(event => {
+            const eventDate = new Date(event.rawDate);
+            return eventDate >= today && eventDate <= sevenDaysFromNow;
+        });
+
+        const formattedDate = today.toLocaleDateString('sv-SE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        
+        const norrtaljeEventsToFetch = Math.max(0, 2 - verifiedLocalEvents.length);
+
+        const localPrompt = norrtaljeEventsToFetch > 0 
+            ? `- **Lokalt Norrtälje:** Hitta exakt ${norrtaljeEventsToFetch} lokala evenemang specifikt för Norrtälje kommun. UNDVIK följande redan tillagda evenemang: ${verifiedLocalEvents.map(e => e.title).join(', ')}. Detta är en mycket viktig kategori.`
+            : '';
+
+        const prompt = `Agera som en nyhetskurator som ger en "heads-up" om viktiga händelser. Målgruppen är svensk.
+Dagens datum är ${formattedDate}. Generera en lista med totalt 10-12 viktiga händelser som äger rum under de kommande sju (7) dagarna, med start från och med idag.
+
+KATEGORIER ATT TÄCKA:
+${localPrompt}
+- **Övriga lokala tips:** Inkludera 1-2 evenemang från andra större svenska städer (t.ex. Stockholm, Göteborg).
+- **Övriga kategorier:** Täck även Internationella nyheter, Svensk politik, Tech, och Nöje.
+
+VIKTIGA REGLER:
+1.  **LÄNK-KRAV:** Försök aktivt att inkludera en fungerande och relevant 'sourceUrl' för alla händelser. Länken ska leda till en officiell webbplats eller en pålitlig nyhetskälla. Om du efter bästa förmåga inte kan hitta en lämplig och trovärdig länk, utelämna 'sourceUrl'-fältet. Undvik helt generiska länkar som 'google.com'.
+2.  **Korrekt datum:** Ange ALLTID ett korrekt och verifierbart datum med ÅR. Använd formatet "Dag DD Mån ÅÅÅÅ, HH:MM" eller "Dag DD Mån ÅÅÅÅ". Fältet 'eventDate' får ALDRIG vara tomt.
+3.  **Sortering:** Sortera hela listan kronologiskt med den tidigaste händelsen först.
+4.  **Språk:** All text måste vara på svenska.`;
+
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: upcomingEventSchema,
+                }
+            },
+        });
+
+        const jsonStr = response.text.trim();
+        const aiEvents = JSON.parse(jsonStr) as UpcomingEvent[];
+        
+        const combinedEvents = [...verifiedLocalEvents, ...aiEvents].map((item: any, index: number) => ({
+            ...item,
+            id: `event-${Date.now()}-${index}`,
+        }));
+
+        // Final sort to ensure chronological order after combining
+        combinedEvents.sort((a, b) => {
+            const dateA = new Date(a.rawDate || a.eventDate);
+            const dateB = new Date(b.rawDate || b.eventDate);
+            return dateA.getTime() - dateB.getTime();
+        });
+
+        return combinedEvents;
+
+    } catch (error)
+ {
+        console.error("Error fetching upcoming events:", error);
+        throw new Error("Failed to fetch upcoming events from Gemini API.");
+    }
+};
+
+export const fetchDayInfo = async (date: Date): Promise<DayInfo> => {
+    try {
+        // --- Get Name Days from local data for 100% accuracy ---
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const dateKey = `${month}-${day}`;
+        const nameDays = swedishNameDays[dateKey] || [];
+        const nameDaySource = nameDays.length > 0 ? "Svenska Akademiens namnlängd" : null;
+
+        // --- Get Theme Day and Week Number from Gemini ---
+        const formattedDate = date.toISOString().split('T')[0];
+        const prompt = `Agera som en kalenderexpert. Ge mig följande information för datumet ${formattedDate}:
+1.  **Temadag (themeDay)**: Returnera en internationellt erkänd temadag om en sådan finns. Annars, returnera JSON 'null'.
+2.  **Veckonummer (weekNumber)**: Returnera det korrekta svenska veckonumret enligt ISO 8601.`;
+        
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: dayInfoPartialSchema,
+            }
+        });
+
+        const geminiData = JSON.parse(response.text.trim());
+
+        // --- Combine local and remote data ---
+        return {
+            nameDays,
+            nameDaySource,
+            themeDay: geminiData.themeDay || null,
+            weekNumber: geminiData.weekNumber || null,
+        };
+
+    } catch (error) {
+        console.error("Error fetching day info:", error);
+        throw new Error("Failed to fetch day info.");
+    }
+};

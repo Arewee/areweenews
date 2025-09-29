@@ -1,0 +1,5 @@
+{
+  "name": "AreWeeNews",
+  "description": "A news app for viral trends from social media that don't get much attention in traditional media. It also provides a heads-up on major upcoming events.",
+  "requestFramePermissions": []
+}
