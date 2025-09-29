@@ -191,9 +191,14 @@ All text måste vara på svenska. Var så specifik och datadriven som möjligt i
                 },
             },
         });
-
-        const jsonStr = response.text.trim();
-        const rawNewsItems = JSON.parse(jsonStr);
+        
+        const text = response.text;
+        if (!text) {
+          console.error("Received empty response for viral news.");
+          return [];
+        }
+        
+        const rawNewsItems = JSON.parse(text.trim());
 
         return rawNewsItems.map((item: any, index: number) => ({
             ...item,
@@ -254,9 +259,18 @@ VIKTIGA REGLER:
                 }
             },
         });
-
-        const jsonStr = response.text.trim();
-        const aiEvents = JSON.parse(jsonStr) as UpcomingEvent[];
+        
+        let aiEvents: UpcomingEvent[] = [];
+        const text = response.text;
+        if (text) {
+          try {
+            aiEvents = JSON.parse(text.trim());
+          } catch (e) {
+            console.error("Failed to parse upcoming events JSON from Gemini:", e);
+             // Return just the local events if parsing fails
+             return verifiedLocalEvents;
+          }
+        }
         
         const combinedEvents = [...verifiedLocalEvents, ...aiEvents].map((item: any, index: number) => ({
             ...item,
@@ -303,7 +317,11 @@ export const fetchDayInfo = async (date: Date): Promise<DayInfo> => {
             }
         });
 
-        const geminiData = JSON.parse(response.text.trim());
+        const text = response.text;
+        if (!text) {
+          throw new Error("Received empty text response from Gemini for day info.");
+        }
+        const geminiData = JSON.parse(text.trim());
 
         // --- Combine local and remote data ---
         return {

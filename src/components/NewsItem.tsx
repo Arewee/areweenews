@@ -1,5 +1,5 @@
 import React from 'react';
-import type { NewsItem as NewsItemType } from '../types';
+import type { NewsItem as NewsItemType, ViralityBreakdown } from '../types';
 
 interface NewsItemProps {
   item: NewsItemType;
@@ -45,10 +45,10 @@ const ArrowsRightLeftIcon: React.FC<{className?: string}> = ({ className }) => (
     </svg>
 );
 
-const SentimentIndicator: React.FC<{ sentiment?: NewsItemType['viralityBreakdown']['sentiment'] }> = ({ sentiment }) => {
+const SentimentIndicator: React.FC<{ sentiment?: ViralityBreakdown['sentiment'] }> = ({ sentiment }) => {
     if (!sentiment) return null;
 
-    const styles = {
+    const styles: Record<ViralityBreakdown['sentiment'], { text: string; icon: JSX.Element; classes: string; }> = {
         Positive: { text: 'Positiv', icon: <PlusCircleIcon className="w-4 h-4" />, classes: 'text-green-300 bg-green-500/10' },
         Negative: { text: 'Negativ', icon: <MinusCircleIcon className="w-4 h-4" />, classes: 'text-red-400 bg-red-500/10' },
         Neutral: { text: 'Neutral', icon: <Bars2Icon className="w-4 h-4" />, classes: 'text-yellow-400 bg-yellow-500/10' },
