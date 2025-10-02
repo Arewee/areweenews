@@ -189,4 +189,160 @@ All text måste vara på svenska. Var så specifik och datadriven som möjligt i
             model: "gemini-2.5-flash",
             contents: prompt,
             config: {
-                
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: newsItemSchema,
+                },
+            },
+        });
+
+        const jsonStr = response.text.trim();
+        let rawNewsItems: any[];
+
+        try {
+            rawNewsItems = JSON.parse(jsonStr);
+        } catch (e) {
+            console.error("Failed to parse JSON from Gemini for news:", jsonStr);
+            throw new Error("Received malformed JSON for news.");
+        }
+
+        return rawNewsItems.map((item: any, index: number) => ({
+            ...item,
+            id: `news-${Date.now()}-${index}`,
+            viralityHistory: item.viralityHistory || [],
+            viralityBreakdown: item.viralityBreakdown || null,
+        }));
+
+    } catch (error) {
+        console.error("Error fetching viral news:", error);
+        throw new Error("Failed to fetch viral news from Gemini API.");
+    }
+};
+
+export const fetchUpcomingEvents = async (): Promise<UpcomingEvent[]> => {
+    try {
+        const today = new Date();
+        const sevenDaysFromNow = new Date();
+        sevenDaysFromNow.setDate(today.getDate() + 7);
+        today.setHours(0, 0, 0, 0); // Start of today
+
+        // 1. Get manually curated local events for 100% accuracy
+        const verifiedLocalEvents = localEvents.filter(event => {
+            const eventDate = new Date(event.rawDate);
+            return eventDate >= today && eventDate <= sevenDaysFromNow;
+        });
+
+        const formattedDate = today.toLocaleDateString('sv-SE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        
+        const norrtaljeEventsToFetch = Math.max(0, 2 - verifiedLocalEvents.length);
+
+        const localPrompt = norrtaljeEventsToFetch > 0 
+            ? `- **Lokalt Norrtälje:** Hitta exakt ${norrtaljeEventsToFetch} lokala evenemang specifikt för Norrtälje kommun. UNDVIK följande redan tillagda evenemang: ${verifiedLocalEvents.map(e => e.title).join(', ')}. Detta är en mycket viktig kategori.`
+            : '';
+
+        const prompt = `Agera som en nyhetskurator som ger en "heads-up" om viktiga händelser. Målgruppen är svensk.
+Dagens datum är ${formattedDate}. Generera en lista med totalt 10-12 viktiga händelser som äger rum under de kommande sju (7) dagarna, med start från och med idag.
+
+KATEGORIER ATT TÄCKA:
+${localPrompt}
+- **Övriga lokala tips:** Inkludera 1-2 evenemang från andra större svenska städer (t.ex. Stockholm, Göteborg).
+- **Övriga kategorier:** Täck även Internationella nyheter, Svensk politik, Tech, och Nöje.
+
+VIKTIGA REGLER:
+1.  **LÄNK-KRAV:** Försök aktivt att inkludera en fungerande och relevant 'sourceUrl' för alla händelser. Länken ska leda till en officiell webbplats eller en pålitlig nyhetskälla. Om du efter bästa förmåga inte kan hitta en lämplig och trovärdig länk, utelämna 'sourceUrl'-fältet. Undvik helt generiska länkar som 'google.com'.
+2.  **Korrekt datum:** Ange ALLTID ett korrekt och verifierbart datum med ÅR. Använd formatet "Dag DD Mån ÅÅÅÅ, HH:MM" eller "Dag DD Mån ÅÅÅÅ". Fältet 'eventDate' får ALDRIG vara tomt. Du måste även returnera fältet 'rawDate' i YYYY-MM-DD-format.
+3.  **Sortering:** Sortera hela listan kronologiskt med den tidigaste händelsen först.
+4.  **Språk:** All text måste vara på svenska.`;
+
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: upcomingEventSchema,
+                }
+            },
+        });
+
+        const jsonStr = response.text.trim();
+        let aiEvents: UpcomingEvent[];
+
+        try {
+            aiEvents = JSON.parse(jsonStr) as UpcomingEvent[];
+        } catch (e) {
+            console.error("Failed to parse JSON from Gemini for events:", jsonStr);
+            throw new Error("Received malformed JSON for events.");
+        }
+        
+        const combinedEvents = [...verifiedLocalEvents, ...aiEvents].map((item: any, index: number) => ({
+            ...item,
+            id: `event-${Date.now()}-${index}`,
+            // Ensure rawDate is present for reliable sorting, even if AI forgets it
+            rawDate: item.rawDate || new Date(item.eventDate.replace(/(\w{3}) (\d{1,2}) (\w{3}) (\d{4}).*/, '$2 $3 $4')).toISOString().split('T')[0],
+        }));
+
+        // Final sort to ensure chronological order after combining
+        combinedEvents.sort((a, b) => {
+            const dateA = new Date(a.rawDate);
+            const dateB = new Date(b.rawDate);
+            return dateA.getTime() - dateB.getTime();
+        });
+
+        return combinedEvents;
+
+    } catch (error) {
+        console.error("Error fetching upcoming events:", error);
+        throw new Error("Failed to fetch upcoming events from Gemini API.");
+    }
+};
+
+export const fetchDayInfo = async (date: Date): Promise<DayInfo> => {
+    try {
+        // --- Get Name Days from local data for 100% accuracy ---
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const dateKey = `${month}-${day}`;
+        const nameDays = swedishNameDays[dateKey] || [];
+        const nameDaySource = nameDays.length > 0 ? "Svenska Akademiens namnlängd" : null;
+
+        // --- Get Theme Day and Week Number from Gemini ---
+        const formattedDate = date.toISOString().split('T')[0];
+        const prompt = `Agera som en kalenderexpert. Ge mig följande information för datumet ${formattedDate}:
+1.  **Temadag (themeDay)**: Returnera en internationellt erkänd temadag om en sådan finns. Annars, returnera JSON 'null'.
+2.  **Veckonummer (weekNumber)**: Returnera det korrekta svenska veckonumret enligt ISO 8601.`;
+        
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: dayInfoPartialSchema,
+            }
+        });
+
+        const jsonStr = response.text.trim();
+        let geminiData: { themeDay: string | null; weekNumber: number | null; };
+
+        try {
+            geminiData = JSON.parse(jsonStr);
+        } catch (e) {
+            console.error("Failed to parse JSON from Gemini for day info:", jsonStr);
+            throw new Error("Received malformed JSON for day info.");
+        }
+
+        // --- Combine local and remote data ---
+        return {
+            nameDays,
+            nameDaySource,
+            themeDay: geminiData.themeDay || null,
+            weekNumber: geminiData.weekNumber || null,
+        };
+
+    } catch (error) {
+        console.error("Error fetching day info:", error);
+        throw new Error("Failed to fetch day info.");
+    }
+};
