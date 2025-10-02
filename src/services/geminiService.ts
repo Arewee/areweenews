@@ -197,9 +197,13 @@ All text måste vara på svenska. Var så specifik och datadriven som möjligt i
             },
         });
 
-        const jsonStr = response.text.trim();
+        // FIX: Added robust parsing and error handling for the API response.
+        const jsonStr = response.text?.trim() ?? '';
+        if (!jsonStr) {
+             throw new Error("Received empty response for news.");
+        }
+        
         let rawNewsItems: any[];
-
         try {
             rawNewsItems = JSON.parse(jsonStr);
         } catch (e) {
@@ -227,7 +231,6 @@ export const fetchUpcomingEvents = async (): Promise<UpcomingEvent[]> => {
         sevenDaysFromNow.setDate(today.getDate() + 7);
         today.setHours(0, 0, 0, 0); // Start of today
 
-        // 1. Get manually curated local events for 100% accuracy
         const verifiedLocalEvents = localEvents.filter(event => {
             const eventDate = new Date(event.rawDate);
             return eventDate >= today && eventDate <= sevenDaysFromNow;
@@ -267,9 +270,13 @@ VIKTIGA REGLER:
             },
         });
 
-        const jsonStr = response.text.trim();
+        // FIX: Added robust parsing and error handling for the API response.
+        const jsonStr = response.text?.trim() ?? '';
+        if (!jsonStr) {
+             throw new Error("Received empty response for events.");
+        }
+        
         let aiEvents: UpcomingEvent[];
-
         try {
             aiEvents = JSON.parse(jsonStr) as UpcomingEvent[];
         } catch (e) {
@@ -280,11 +287,9 @@ VIKTIGA REGLER:
         const combinedEvents = [...verifiedLocalEvents, ...aiEvents].map((item: any, index: number) => ({
             ...item,
             id: `event-${Date.now()}-${index}`,
-            // Ensure rawDate is present for reliable sorting, even if AI forgets it
             rawDate: item.rawDate || new Date(item.eventDate.replace(/(\w{3}) (\d{1,2}) (\w{3}) (\d{4}).*/, '$2 $3 $4')).toISOString().split('T')[0],
         }));
 
-        // Final sort to ensure chronological order after combining
         combinedEvents.sort((a, b) => {
             const dateA = new Date(a.rawDate);
             const dateB = new Date(b.rawDate);
@@ -301,14 +306,12 @@ VIKTIGA REGLER:
 
 export const fetchDayInfo = async (date: Date): Promise<DayInfo> => {
     try {
-        // --- Get Name Days from local data for 100% accuracy ---
         const month = String(date.getMonth() + 1).padStart(2, '0');
         const day = String(date.getDate()).padStart(2, '0');
         const dateKey = `${month}-${day}`;
         const nameDays = swedishNameDays[dateKey] || [];
         const nameDaySource = nameDays.length > 0 ? "Svenska Akademiens namnlängd" : null;
 
-        // --- Get Theme Day and Week Number from Gemini ---
         const formattedDate = date.toISOString().split('T')[0];
         const prompt = `Agera som en kalenderexpert. Ge mig följande information för datumet ${formattedDate}:
 1.  **Temadag (themeDay)**: Returnera en internationellt erkänd temadag om en sådan finns. Annars, returnera JSON 'null'.
@@ -322,10 +325,14 @@ export const fetchDayInfo = async (date: Date): Promise<DayInfo> => {
                 responseSchema: dayInfoPartialSchema,
             }
         });
+        
+        // FIX: Added robust parsing and error handling for the API response.
+        const jsonStr = response.text?.trim() ?? '';
+        if (!jsonStr) {
+             throw new Error("Received empty response for day info.");
+        }
 
-        const jsonStr = response.text.trim();
         let geminiData: { themeDay: string | null; weekNumber: number | null; };
-
         try {
             geminiData = JSON.parse(jsonStr);
         } catch (e) {
@@ -333,7 +340,6 @@ export const fetchDayInfo = async (date: Date): Promise<DayInfo> => {
             throw new Error("Received malformed JSON for day info.");
         }
 
-        // --- Combine local and remote data ---
         return {
             nameDays,
             nameDaySource,

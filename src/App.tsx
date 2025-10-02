@@ -73,18 +73,16 @@ const App: React.FC = () => {
         setDayInfo(cachedDayInfo);
         setCurrentPage(cachedPage ?? 0);
         setHasMoreNews(true); // Assume there might be more news
+        setIsLoading(false);
       } else {
         // No cache, fetch fresh data
         await fetchAndCacheContent(selectedSources);
+        setIsLoading(false);
       }
-      setIsLoading(false);
     };
 
     loadInitialData();
-    // We only want this to run once on initial mount, so the dependency array is empty.
-    // The selectedSources are loaded from cache initially, and any subsequent changes
-    // won't trigger an automatic refetch, adhering to the new manual update flow.
-  }, [fetchAndCacheContent]);
+  }, [fetchAndCacheContent, selectedSources]);
 
 
   const handleNextPage = async () => {
