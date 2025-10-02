@@ -226,7 +226,7 @@ const NewsItem: React.FC<NewsItemProps> = ({ item, isTopStory, className, onShow
 
         <div className="flex justify-between items-center text-sm font-semibold mt-auto pt-4 border-t border-gray-700/50">
           <div className="flex items-center gap-3">
-              <span className="text-gray-500">{item.sourceName}</span>
+              <span className="text-gray-400">{item.sourceName}</span>
               <SentimentIndicator sentiment={item.viralityBreakdown?.sentiment} />
           </div>
           <div className="flex items-center text-teal-400 z-10 relative">

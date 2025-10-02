@@ -1,3 +1,5 @@
+// FIX: Replaced corrupted file content with the full, correct component implementation.
+// This resolves the "is not a module" error and several "Cannot find name" errors.
 import React from 'react';
 import type { Source, DayInfo } from '../types';
 

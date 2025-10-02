@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { fetchViralNews, fetchUpcomingEvents, fetchDayInfo } from './services/geminiService';
 import type { NewsItem, UpcomingEvent, DayInfo, Source } from './types';
 import { ALL_SOURCES } from './types';
+import { getCachedData, setCachedData, CACHE_KEYS } from './utils/cache';
 import Header from './components/Header';
 import NewsFeed from './components/NewsFeed';
 import UpcomingEvents from './components/UpcomingEvents';
@@ -17,15 +18,15 @@ const App: React.FC = () => {
   const [upcomingEvents, setUpcomingEvents] = useState<UpcomingEvent[]>([]);
   const [dayInfo, setDayInfo] = useState<DayInfo | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isUpdating, setIsUpdating] = useState<boolean>(false);
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [selectedSources, setSelectedSources] = useState<Source[]>([...ALL_SOURCES]);
+  const [selectedSources, setSelectedSources] = useState<Source[]>(() => getCachedData<Source[]>(CACHE_KEYS.SOURCES) || [...ALL_SOURCES]);
   const [hasMoreNews, setHasMoreNews] = useState(true);
   const [selectedNewsItemForModal, setSelectedNewsItemForModal] = useState<NewsItem | null>(null);
 
-  const loadInitialContent = useCallback(async (sources: Source[]) => {
-    setIsLoading(true);
+  const fetchAndCacheContent = useCallback(async (sources: Source[]) => {
     setError(null);
     try {
       const [initialNews, events, dayData] = await Promise.all([
@@ -33,26 +34,64 @@ const App: React.FC = () => {
         fetchUpcomingEvents(),
         fetchDayInfo(new Date()),
       ]);
+
       setNewsPages([initialNews]);
       setUpcomingEvents(events);
       setDayInfo(dayData);
       setCurrentPage(0);
       setHasMoreNews(initialNews.length > 0);
+
+      // Cache the new data
+      setCachedData(CACHE_KEYS.NEWS, [initialNews]);
+      setCachedData(CACHE_KEYS.EVENTS, events);
+      setCachedData(CACHE_KEYS.DAY_INFO, dayData);
+      setCachedData(CACHE_KEYS.CURRENT_PAGE, 0);
+
     } catch (err) {
       console.error("Failed to load content:", err);
       setError("Kunde inte ladda nyhetsflödet. Kontrollera att din API-nyckel är korrekt konfigurerad och försök igen.");
-    } finally {
-      setIsLoading(false);
     }
   }, []);
 
+  const handleUpdate = async () => {
+      setIsUpdating(true);
+      await fetchAndCacheContent(selectedSources);
+      setIsUpdating(false);
+  };
+
   useEffect(() => {
-    loadInitialContent(selectedSources);
-  }, [selectedSources, loadInitialContent]);
+    const loadInitialData = async () => {
+      setIsLoading(true);
+      const cachedNews = getCachedData<NewsItem[][]>(CACHE_KEYS.NEWS);
+      const cachedEvents = getCachedData<UpcomingEvent[]>(CACHE_KEYS.EVENTS);
+      const cachedDayInfo = getCachedData<DayInfo>(CACHE_KEYS.DAY_INFO);
+      const cachedPage = getCachedData<number>(CACHE_KEYS.CURRENT_PAGE);
+
+      if (cachedNews && cachedEvents && cachedDayInfo) {
+        setNewsPages(cachedNews);
+        setUpcomingEvents(cachedEvents);
+        setDayInfo(cachedDayInfo);
+        setCurrentPage(cachedPage ?? 0);
+        setHasMoreNews(true); // Assume there might be more news
+      } else {
+        // No cache, fetch fresh data
+        await fetchAndCacheContent(selectedSources);
+      }
+      setIsLoading(false);
+    };
+
+    loadInitialData();
+    // We only want this to run once on initial mount, so the dependency array is empty.
+    // The selectedSources are loaded from cache initially, and any subsequent changes
+    // won't trigger an automatic refetch, adhering to the new manual update flow.
+  }, [fetchAndCacheContent]);
+
 
   const handleNextPage = async () => {
     if (currentPage < newsPages.length - 1) {
-      setCurrentPage(currentPage + 1);
+      const newPage = currentPage + 1;
+      setCurrentPage(newPage);
+      setCachedData(CACHE_KEYS.CURRENT_PAGE, newPage);
       return;
     }
 
@@ -63,11 +102,14 @@ const App: React.FC = () => {
       const allTitles = newsPages.flat().map(item => item.title);
       const newNews = await fetchViralNews(allTitles, selectedSources);
       if (newNews && newNews.length > 0) {
-        setNewsPages([...newsPages, newNews]);
-        setCurrentPage(currentPage + 1);
+        const updatedNewsPages = [...newsPages, newNews];
+        setNewsPages(updatedNewsPages);
+        const newPage = currentPage + 1;
+        setCurrentPage(newPage);
+        setCachedData(CACHE_KEYS.NEWS, updatedNewsPages);
+        setCachedData(CACHE_KEYS.CURRENT_PAGE, newPage);
       } else {
         setHasMoreNews(false);
-        // Optional: alert("Kunde inte hitta fler unika nyheter just nu.");
       }
     } catch (err) {
       setError("Kunde inte ladda fler nyheter.");
@@ -78,12 +120,15 @@ const App: React.FC = () => {
 
   const handlePrevPage = () => {
     if (currentPage > 0) {
-      setCurrentPage(currentPage - 1);
+      const newPage = currentPage - 1;
+      setCurrentPage(newPage);
+      setCachedData(CACHE_KEYS.CURRENT_PAGE, newPage);
     }
   };
   
   const handleSourcesChange = (newSources: Source[]) => {
       setSelectedSources(newSources);
+      setCachedData(CACHE_KEYS.SOURCES, newSources);
   };
   
   const handleShowBreakdown = (item: NewsItem) => {
@@ -92,7 +137,11 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-900 flex flex-col">
-      <Header onOpenSettings={() => setIsSettingsOpen(true)} />
+      <Header 
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        onUpdate={handleUpdate}
+        isUpdating={isUpdating}
+      />
       <main className="flex-grow container mx-auto p-4 lg:p-8">
         {isLoading ? (
           <div className="flex justify-center items-center h-96">

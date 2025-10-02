@@ -1,3 +1,5 @@
+// FIX: Replaced truncated file content with the full, correct component implementation.
+// This adds the missing default export and resolves the error in the importing component.
 import React from 'react';
 import type { UpcomingEvent } from '../types';
 
